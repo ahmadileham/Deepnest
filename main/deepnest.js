@@ -13,7 +13,7 @@
 	root.DeepNest = new DeepNest();
 	
 	function DeepNest(){
-		var self = this;
+		var self = this;X
 		
 		var svg = null;
 		
@@ -76,20 +76,7 @@
 
 			return parts;
 			
-			// test simplification
-			/*for(i=0; i<parts.length; i++){
-				var part = parts[i];
-				this.renderPolygon(part.polygontree, svg);
-				var simple = this.simplifyPolygon(part.polygontree);
-				this.renderPolygon(simple, svg, 'active');
-				if(part.polygontree.children){
-					for(var j=0; j<part.polygontree.children.length; j++){
-						var schild = this.simplifyPolygon(part.polygontree.children[j], true);
-						//this.renderPolygon(schild, svg, 'active');
-					}
-				}
-				//this.renderPolygon(simple.exterior, svg, 'error');
-			}*/
+
 		}
 		
 		// debug function
@@ -144,139 +131,139 @@
 		}
 		
 		// use RDP simplification, then selectively offset
-		this.simplifyPolygon = function(polygon, inside){
-			var tolerance = 4*config.curveTolerance;
-			
-			// give special treatment to line segments above this length (squared)
-			var fixedTolerance = 40*config.curveTolerance*40*config.curveTolerance;
-			var i,j,k;
-			var self = this;
-			
-			if(config.simplify){
-				/*
-				// use convex hull
-				var hull = new ConvexHullGrahamScan();
-				for(var i=0; i<polygon.length; i++){
-					hull.addPoint(polygon[i].x, polygon[i].y);
-				}
-			
-				return hull.getHull();*/
-				var hull = this.getHull(polygon);
-				if(hull){
-					return hull;
-				}
-				else{
-					return polygon;
-				}
+		this.simplifyPolygon = function(polygon, inside) {
+			var tolerance = 4 * config.curveTolerance;
+			var fixedTolerance = 40 * config.curveTolerance * 40 * config.curveTolerance;
+		
+			if (config.simplify) {
+				return getHullOrPolygon(polygon);
 			}
-			
+		
+			polygon = cleanPolygon(polygon);
+			if (!polygon) return polygon;
+		
+			var simple = simplifyPolyline(polygon, tolerance, fixedTolerance);
+			simple = cleanPolygon(simple) || polygon;
+		
+			var offset = calculateOffset(simple, tolerance, inside);
+			if (!offset) return polygon;
+		
+			markExactPoints(simple, polygon);
+			var shells = generateShells(simple, tolerance, inside);
+		
+			offset = selectivelyReverseOffset(offset, simple, polygon, tolerance, inside, shells);
+			offset = straightenLongLines(offset, simple, fixedTolerance, tolerance);
+		
+			return cleanPolygon(offset) || offset;
+		}
+		
+		function getHullOrPolygon(polygon) {
+			var hull = getHull(polygon);
+			return hull || polygon;
+		}
+		
+		function cleanPolygon(polygon) {
 			var cleaned = this.cleanPolygon(polygon);
-			if(cleaned && cleaned.length > 1){
-				polygon = cleaned;
-			}
-			else{
-				return polygon;
-			}
-			
-			// polygon to polyline
+			return cleaned && cleaned.length > 1 ? cleaned : null;
+		}
+		
+		function simplifyPolyline(polygon, tolerance, fixedTolerance) {
 			var copy = polygon.slice(0);
 			copy.push(copy[0]);
-			
-			// mark all segments greater than ~0.25 in to be kept
-			// the PD simplification algo doesn't care about the accuracy of long lines, only the absolute distance of each point
-			// we care a great deal
-			for(i=0; i<copy.length-1; i++){
+		
+			markLongSegments(copy, fixedTolerance);
+			var simple = window.simplify(copy, tolerance, true);
+			simple.pop();
+		
+			return simple;
+		}
+		
+		function markLongSegments(copy, fixedTolerance) {
+			for (var i = 0; i < copy.length - 1; i++) {
 				var p1 = copy[i];
-				var p2 = copy[i+1];
-				var sqd = (p2.x-p1.x)*(p2.x-p1.x) + (p2.y-p1.y)*(p2.y-p1.y);
-				if(sqd > fixedTolerance){
+				var p2 = copy[i + 1];
+				var sqd = (p2.x - p1.x) * (p2.x - p1.x) + (p2.y - p1.y) * (p2.y - p1.y);
+				if (sqd > fixedTolerance) {
 					p1.marked = true;
 					p2.marked = true;
 				}
 			}
-			
-			var simple = window.simplify(copy, tolerance, true);
-			// now a polygon again
-			simple.pop();
-			
-			// could be dirty again (self intersections and/or coincident points)
-			simple = this.cleanPolygon(simple);
-			
-			// simplification process reduced poly to a line or point
-			if(!simple){
-				simple = polygon;
-			}
-			
-			
-			
+		}
+		
+		function calculateOffset(simple, tolerance, inside) {
 			var offsets = this.polygonOffset(simple, inside ? -tolerance : tolerance);
-			
 			var offset = null;
 			var offsetArea = 0;
 			var holes = [];
-			for(i=0; i<offsets.length; i++){
+		
+			for (var i = 0; i < offsets.length; i++) {
 				var area = GeometryUtil.polygonArea(offsets[i]);
-				if(offset == null || area < offsetArea){
+				if (offset == null || area < offsetArea) {
 					offset = offsets[i];
 					offsetArea = area;
 				}
-				if(area > 0){
+				if (area > 0) {
 					holes.push(offsets[i]);
 				}
 			}
-						
-			// mark any points that are exact
-			for(i=0; i<simple.length; i++){
-				var seg = [simple[i], simple[i+1 == simple.length ? 0 : i+1]];
+		
+			if (!inside && holes.length > 0) {
+				offset.children = holes;
+			}
+		
+			return offset;
+		}
+		
+		function markExactPoints(simple, polygon) {
+			for (var i = 0; i < simple.length; i++) {
+				var seg = [simple[i], simple[i + 1 == simple.length ? 0 : i + 1]];
 				var index1 = find(seg[0], polygon);
 				var index2 = find(seg[1], polygon);
-				
-				if(index1 + 1 == index2 || index2+1 == index1 || (index1 == 0 && index2 == polygon.length-1) || (index2 == 0 && index1 == polygon.length-1)){
+		
+				if (index1 + 1 == index2 || index2 + 1 == index1 || (index1 == 0 && index2 == polygon.length - 1) || (index2 == 0 && index1 == polygon.length - 1)) {
 					seg[0].exact = true;
 					seg[1].exact = true;
 				}
 			}
-			
+		}
+		
+		function generateShells(simple, tolerance, inside) {
 			var numshells = 4;
 			var shells = [];
-			
-			for(j=1; j<numshells; j++){
-				var delta = j*(tolerance/numshells);
+		
+			for (var j = 1; j < numshells; j++) {
+				var delta = j * (tolerance / numshells);
 				delta = inside ? -delta : delta;
 				var shell = this.polygonOffset(simple, delta);
-				if(shell.length > 0){
+				if (shell.length > 0) {
 					shell = shell[0];
 				}
 				shells[j] = shell;
 			}
-						
-			if(!offset){
-				return polygon;
-			}
-			
-			// selective reversal of offset
-			for(i=0; i<offset.length; i++){
+		
+			return shells;
+		}
+		
+		function selectivelyReverseOffset(offset, simple, polygon, tolerance, inside, shells) {
+			for (var i = 0; i < offset.length; i++) {
 				var o = offset[i];
-				var target = getTarget(o, simple, 2*tolerance);
-				
-				// reverse point offset and try to find exterior points
+				var target = getTarget(o, simple, 2 * tolerance);
+		
 				var test = clone(offset);
-				test[i] = {x: target.x, y: target.y};
-				
-				if(!exterior(test, polygon, inside)){
+				test[i] = { x: target.x, y: target.y };
+		
+				if (!exterior(test, polygon, inside)) {
 					o.x = target.x;
 					o.y = target.y;
-				}
-				else{
-					// a shell is an intermediate offset between simple and offset
-					for(j=1; j<numshells; j++){
-						if(shells[j]){
+				} else {
+					for (var j = 1; j < shells.length; j++) {
+						if (shells[j]) {
 							var shell = shells[j];
-							var delta = j*(tolerance/numshells);
-							target = getTarget(o, shell, 2*delta);
-							var test = clone(offset);
-							test[i] = {x: target.x, y: target.y};
-							if(!exterior(test, polygon, inside)){
+							var delta = j * (tolerance / shells.length);
+							target = getTarget(o, shell, 2 * delta);
+							test = clone(offset);
+							test[i] = { x: target.x, y: target.y };
+							if (!exterior(test, polygon, inside)) {
 								o.x = target.x;
 								o.y = target.y;
 								break;
@@ -285,195 +272,110 @@
 					}
 				}
 			}
-			
-			
-			// straighten long lines
-			// a rounded rectangle would still have issues at this point, as the long sides won't line up straight
-			
-			var straightened = false;
-			
-			for(i=0; i<offset.length; i++){
+		
+			return offset;
+		}
+		
+		function straightenLongLines(offset, simple, fixedTolerance, tolerance) {
+			for (var i = 0; i < offset.length; i++) {
 				var p1 = offset[i];
-				var p2 = offset[i+1 == offset.length ? 0 : i+1];
-				
-				var sqd = (p2.x-p1.x)*(p2.x-p1.x) + (p2.y-p1.y)*(p2.y-p1.y);
-				
-				if(sqd < fixedTolerance){
-					continue;
-				}
-				for(j=0; j<simple.length; j++){
+				var p2 = offset[i + 1 == offset.length ? 0 : i + 1];
+				var sqd = (p2.x - p1.x) * (p2.x - p1.x) + (p2.y - p1.y) * (p2.y - p1.y);
+		
+				if (sqd < fixedTolerance) continue;
+		
+				for (var j = 0; j < simple.length; j++) {
 					var s1 = simple[j];
-					var s2 = simple[j+1 == simple.length ? 0 : j+1];
-					
-					var sqds = (p2.x-p1.x)*(p2.x-p1.x) + (p2.y-p1.y)*(p2.y-p1.y);
-				
-					if(sqds < fixedTolerance){
-						continue;
-					}
-					
-					if((GeometryUtil.almostEqual(s1.x, s2.x) || GeometryUtil.almostEqual(s1.y, s2.y)) && // we only really care about vertical and horizontal lines
-					GeometryUtil.withinDistance(p1, s1, 2*tolerance) && 
-					GeometryUtil.withinDistance(p2, s2, 2*tolerance) && 
-					(!GeometryUtil.withinDistance(p1, s1, config.curveTolerance/1000) ||
-					!GeometryUtil.withinDistance(p2, s2, config.curveTolerance/1000))){
+					var s2 = simple[j + 1 == simple.length ? 0 : j + 1];
+					var sqds = (p2.x - p1.x) * (p2.x - p1.x) + (p2.y - p1.y) * (p2.y - p1.y);
+		
+					if (sqds < fixedTolerance) continue;
+		
+					if ((GeometryUtil.almostEqual(s1.x, s2.x) || GeometryUtil.almostEqual(s1.y, s2.y)) &&
+						GeometryUtil.withinDistance(p1, s1, 2 * tolerance) &&
+						GeometryUtil.withinDistance(p2, s2, 2 * tolerance) &&
+						(!GeometryUtil.withinDistance(p1, s1, config.curveTolerance / 1000) ||
+							!GeometryUtil.withinDistance(p2, s2, config.curveTolerance / 1000))) {
 						p1.x = s1.x;
 						p1.y = s1.y;
 						p2.x = s2.x;
 						p2.y = s2.y;
-						straightened = true;
 					}
 				}
 			}
-			
-			//if(straightened){
-				var Ac = toClipperCoordinates(offset);
-				ClipperLib.JS.ScaleUpPath(Ac, 10000000);
-				var Bc = toClipperCoordinates(polygon);
-				ClipperLib.JS.ScaleUpPath(Bc, 10000000);
-				
-				var combined = new ClipperLib.Paths();
-				var clipper = new ClipperLib.Clipper();
-				
-				clipper.AddPath(Ac, ClipperLib.PolyType.ptSubject, true);
-				clipper.AddPath(Bc, ClipperLib.PolyType.ptSubject, true);
-			
-				// the line straightening may have made the offset smaller than the simplified
-				if(clipper.Execute(ClipperLib.ClipType.ctUnion, combined, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero)){
-					var largestArea = null;
-					for(i=0; i<combined.length; i++){
-						var n = toNestCoordinates(combined[i], 10000000);
-						var sarea = -GeometryUtil.polygonArea(n);
-						if(largestArea === null || largestArea < sarea){
-							offset = n;
-							largestArea = sarea;
-						}
-					}
-				}
-			//}
-			
-			cleaned = this.cleanPolygon(offset);
-			if(cleaned && cleaned.length > 1){
-				offset = cleaned;
-			}
-			
-			// mark any points that are exact (for line merge detection)
-			for(i=0; i<offset.length; i++){
-				var seg = [offset[i], offset[i+1 == offset.length ? 0 : i+1]];
-				var index1 = find(seg[0], polygon);
-				var index2 = find(seg[1], polygon);
-				
-				if(index1 + 1 == index2 || index2+1 == index1 || (index1 == 0 && index2 == polygon.length-1) || (index2 == 0 && index1 == polygon.length-1)){
-					seg[0].exact = true;
-					seg[1].exact = true;
-				}
-			}
-			
-			if(!inside && holes && holes.length > 0){
-				offset.children = holes;
-			}
-			
+		
 			return offset;
-			
-			function getTarget(point, simple, tol){
-				var inrange = [];
-				// find closest points within 2 offset deltas
-				for(var j=0; j<simple.length; j++){
+		}
+		
+		function getTarget(point, simple, tol) {
+			var inrange = [];
+			for (var j = 0; j < simple.length; j++) {
+				var s = simple[j];
+				var d2 = (point.x - s.x) * (point.x - s.x) + (point.y - s.y) * (point.y - s.y);
+				if (d2 < tol * tol) {
+					inrange.push({ point: s, distance: d2 });
+				}
+			}
+		
+			var target;
+			if (inrange.length > 0) {
+				var filtered = inrange.filter(function (p) {
+					return p.point.exact;
+				});
+		
+				inrange = filtered.length > 0 ? filtered : inrange;
+				inrange.sort(function (a, b) {
+					return a.distance - b.distance;
+				});
+		
+				target = inrange[0].point;
+			} else {
+				var mind = null;
+				for (var j = 0; j < simple.length; j++) {
 					var s = simple[j];
-					var d2 = (o.x-s.x)*(o.x-s.x) + (o.y-s.y)*(o.y-s.y);
-					if(d2 < tol*tol){
-						inrange.push({point: s, distance: d2});
+					var d2 = (point.x - s.x) * (point.x - s.x) + (point.y - s.y) * (point.y - s.y);
+					if (mind === null || d2 < mind) {
+						target = s;
+						mind = d2;
 					}
 				}
-				
-				var target;
-				if(inrange.length > 0){
-					var filtered = inrange.filter(function(p){
-						return p.point.exact;
-					});
-					
-					// use exact points when available, normal points when not
-					inrange = filtered.length > 0 ? filtered : inrange;
-					
-					inrange.sort(function(a, b){
-						return a.distance - b.distance;
-					});
-					
-					target = inrange[0].point;
-				}
-				else{
-					var mind = null;
-					for(j=0; j<simple.length; j++){
-						var s = simple[j];
-						var d2 = (o.x-s.x)*(o.x-s.x) + (o.y-s.y)*(o.y-s.y);
-						if(mind === null || d2 < mind){
-							target = s;
-							mind = d2;
-						}
-					}
-				}
-				
-				return target;
 			}
-			
-			// returns true if any complex vertices fall outside the simple polygon
-			function exterior(simple, complex, inside){
-				// find all protruding vertices
-				for(var i=0; i<complex.length; i++){
-					var v = complex[i];
-					if(!inside && !self.pointInPolygon(v, simple) && find(v, simple) === null){
-						return true;
-					}
-					if(inside && self.pointInPolygon(v, simple) && !find(v, simple) === null){
-						return true;
-					}
+		
+			return target;
+		}
+		
+		function exterior(simple, complex, inside) {
+			for (var i = 0; i < complex.length; i++) {
+				var v = complex[i];
+				if (!inside && !this.pointInPolygon(v, simple) && find(v, simple) === null) {
+					return true;
 				}
-				return false;
+				if (inside && this.pointInPolygon(v, simple) && !find(v, simple) === null) {
+					return true;
+				}
 			}
-			
-			function toClipperCoordinates(polygon){
-				var clone = [];
-				for(var i=0; i<polygon.length; i++){
-					clone.push({
-						X: polygon[i].x,
-						Y: polygon[i].y
-					});
+			return false;
+		}
+		
+		function find(v, p) {
+			for (var i = 0; i < p.length; i++) {
+				if (GeometryUtil.withinDistance(v, p[i], config.curveTolerance / 1000)) {
+					return i;
 				}
-	
-				return clone;
-			};
-			
-			function toNestCoordinates(polygon, scale){
-				var clone = [];
-				for(var i=0; i<polygon.length; i++){
-					clone.push({
-						x: polygon[i].X/scale,
-						y: polygon[i].Y/scale
-					});
-				}
-	
-				return clone;
-			};
-			
-			function find(v, p){
-				for(var i=0; i<p.length; i++){
-					if(GeometryUtil.withinDistance(v, p[i], config.curveTolerance/1000)){
-						return i;
-					}
-				}
-				return null;
 			}
-			
-			function clone(p){
-				var newp = [];
-				for(var i=0; i<p.length; i++){
-					newp.push({
-						x: p[i].x,
-						y: p[i].y
-					});
-				}
-	
-				return newp;
+			return null;
+		}
+		
+		function clone(p) {
+			var newp = [];
+			for (var i = 0; i < p.length; i++) {
+				newp.push({
+					x: p[i].x,
+					y: p[i].y
+				});
 			}
+		
+			return newp;
 		}
 		
 		this.config = function(c){
@@ -547,97 +449,6 @@
 			return ClipperLib.Clipper.PointInPolygon(pt, p) > 0;
 		}
 		
-		/*this.simplifyPolygon = function(polygon, concavehull){
-			function clone(p){
-				var newp = [];
-				for(var i=0; i<p.length; i++){
-					newp.push({
-						x: p[i].x,
-						y: p[i].y
-						//fuck: p[i].fuck
-					});
-				}
-				return newp;
-			}
-			if(concavehull){
-				var hull = concavehull;
-			}
-			else{
-				var hull = new ConvexHullGrahamScan();
-				for(var i=0; i<polygon.length; i++){
-					hull.addPoint(polygon[i].x, polygon[i].y);
-				}
-			
-				hull = hull.getHull();
-			}
-			
-			var hullarea = Math.abs(GeometryUtil.polygonArea(hull));
-			
-			var concave = [];
-			var detail = [];
-			
-			// fill concave[] with convex points, ensuring same order as initial polygon
-			for(i=0; i<polygon.length; i++){
-				var p = polygon[i];
-				var found = false;
-				for(var j=0; j<hull.length; j++){
-					var hp = hull[j];
-					if(GeometryUtil.almostEqual(hp.x, p.x) && GeometryUtil.almostEqual(hp.y, p.y)){
-						found = true;
-						break;
-					}
-				}
-				
-				if(found){
-					concave.push(p);
-					//p.fuck = i+'yes';
-				}
-				else{
-					detail.push(p);
-					//p.fuck = i+'no';
-				}
-			}
-			
-			var cindex = -1;
-			var simple = [];
-			
-			for(i=0; i<polygon.length; i++){
-				var p = polygon[i];
-				if(concave.indexOf(p) > -1){
-					cindex = concave.indexOf(p);
-					simple.push(p);
-				}
-				else{
-					
-					var test = clone(concave);
-					test.splice(cindex < 0 ? 0 : cindex+1,0,p);
-					
-					var outside = false;
-					for(var j=0; j<detail.length; j++){
-						if(detail[j] == p){
-							continue;
-						}
-						if(!this.pointInPolygon(detail[j], test)){
-							//console.log(detail[j], test);
-							outside = true;
-							break;
-						}
-					}
-					
-					if(outside){
-						continue;
-					}
-					
-					var testarea =  Math.abs(GeometryUtil.polygonArea(test));
-					//console.log(testarea, hullarea);
-					if(testarea/hullarea < 0.98){
-						simple.push(p);
-					}
-				}
-			}
-			
-			return simple;
-		}*/
 		
 		// assuming no intersections, return a tree where odd leaves are parts and even ones are holes
 		// might be easier to use the DOM, but paths can't have paths as children. So we'll just make our own tree.

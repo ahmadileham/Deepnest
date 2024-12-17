@@ -9,11 +9,15 @@
 	const { ipcRenderer } = require('electron');
 	const path = require('path')
 	const url = require('url')
+	const d3 = require('d3');
+	const ClipperLib = require('clipper-lib');
+	const GeometryUtil = require('./geometry-util'); // Assuming you have a geometry-util.js file
+	const deepnest = require('./deepnest'); // Adjust the path as necessary
 	
 	root.DeepNest = new DeepNest();
 	
 	function DeepNest(){
-		var self = this;X
+		var self = this;
 		
 		var svg = null;
 		
@@ -132,250 +136,358 @@
 		
 		// use RDP simplification, then selectively offset
 		this.simplifyPolygon = function(polygon, inside) {
+			console.time('simplifyPolygon');
+			logResourceUsage('simplifyPolygon - start');
+		
 			var tolerance = 4 * config.curveTolerance;
 			var fixedTolerance = 40 * config.curveTolerance * 40 * config.curveTolerance;
 		
-			if (config.simplify) {
-				return getHullOrPolygon(polygon);
+			try {
+				if (config.simplify) {
+					return getHullOrPolygon(polygon);
+				}
+		
+				polygon = cleanPolygon(polygon);
+				if (!polygon) return polygon;
+		
+				var simple = simplifyPolyline(polygon, tolerance, fixedTolerance);
+				simple = cleanPolygon(simple) || polygon;
+		
+				var offset = calculateOffset(simple, tolerance, inside);
+				if (!offset) return polygon;
+		
+				markExactPoints(simple, polygon);
+				var shells = generateShells(simple, tolerance, inside);
+		
+				offset = selectivelyReverseOffset(offset, simple, polygon, tolerance, inside, shells);
+				offset = straightenLongLines(offset, simple, fixedTolerance, tolerance);
+		
+				return cleanPolygon(offset) || offset;
+			} catch (error) {
+				console.error('Error in simplifyPolygon:', error);
+			} finally {
+				console.timeEnd('simplifyPolygon');
+				logResourceUsage('simplifyPolygon - end');
 			}
-		
-			polygon = cleanPolygon(polygon);
-			if (!polygon) return polygon;
-		
-			var simple = simplifyPolyline(polygon, tolerance, fixedTolerance);
-			simple = cleanPolygon(simple) || polygon;
-		
-			var offset = calculateOffset(simple, tolerance, inside);
-			if (!offset) return polygon;
-		
-			markExactPoints(simple, polygon);
-			var shells = generateShells(simple, tolerance, inside);
-		
-			offset = selectivelyReverseOffset(offset, simple, polygon, tolerance, inside, shells);
-			offset = straightenLongLines(offset, simple, fixedTolerance, tolerance);
-		
-			return cleanPolygon(offset) || offset;
 		}
 		
 		function getHullOrPolygon(polygon) {
-			var hull = getHull(polygon);
-			return hull || polygon;
+			console.time('getHullOrPolygon');
+			try {
+				var hull = getHull(polygon);
+				return hull || polygon;
+			} catch (error) {
+				console.error('Error in getHullOrPolygon:', error);
+			} finally {
+				console.timeEnd('getHullOrPolygon');
+			}
 		}
 		
 		function cleanPolygon(polygon) {
-			var cleaned = this.cleanPolygon(polygon);
-			return cleaned && cleaned.length > 1 ? cleaned : null;
+			console.time('cleanPolygon');
+			try {
+				var cleaned = this.cleanPolygon(polygon);
+				return cleaned && cleaned.length > 1 ? cleaned : null;
+			} catch (error) {
+				console.error('Error in cleanPolygon:', error);
+			} finally {
+				console.timeEnd('cleanPolygon');
+			}
 		}
 		
 		function simplifyPolyline(polygon, tolerance, fixedTolerance) {
-			var copy = polygon.slice(0);
-			copy.push(copy[0]);
+			console.time('simplifyPolyline');
+			try {
+				var copy = polygon.slice(0);
+				copy.push(copy[0]);
 		
-			markLongSegments(copy, fixedTolerance);
-			var simple = window.simplify(copy, tolerance, true);
-			simple.pop();
+				markLongSegments(copy, fixedTolerance);
+				var simple = window.simplify(copy, tolerance, true);
+				simple.pop();
 		
-			return simple;
+				return simple;
+			} catch (error) {
+				console.error('Error in simplifyPolyline:', error);
+			} finally {
+				console.timeEnd('simplifyPolyline');
+			}
 		}
 		
 		function markLongSegments(copy, fixedTolerance) {
-			for (var i = 0; i < copy.length - 1; i++) {
-				var p1 = copy[i];
-				var p2 = copy[i + 1];
-				var sqd = (p2.x - p1.x) * (p2.x - p1.x) + (p2.y - p1.y) * (p2.y - p1.y);
-				if (sqd > fixedTolerance) {
-					p1.marked = true;
-					p2.marked = true;
+			console.time('markLongSegments');
+			try {
+				for (var i = 0; i < copy.length - 1; i++) {
+					var p1 = copy[i];
+					var p2 = copy[i + 1];
+					var sqd = (p2.x - p1.x) * (p2.x - p1.x) + (p2.y - p1.y) * (p2.y - p1.y);
+					if (sqd > fixedTolerance) {
+						p1.marked = true;
+						p2.marked = true;
+					}
 				}
+			} catch (error) {
+				console.error('Error in markLongSegments:', error);
+			} finally {
+				console.timeEnd('markLongSegments');
 			}
 		}
 		
 		function calculateOffset(simple, tolerance, inside) {
-			var offsets = this.polygonOffset(simple, inside ? -tolerance : tolerance);
-			var offset = null;
-			var offsetArea = 0;
-			var holes = [];
+			console.time('calculateOffset');
+			try {
+				var offsets = this.polygonOffset(simple, inside ? -tolerance : tolerance);
+				var offset = null;
+				var offsetArea = 0;
+				var holes = [];
 		
-			for (var i = 0; i < offsets.length; i++) {
-				var area = GeometryUtil.polygonArea(offsets[i]);
-				if (offset == null || area < offsetArea) {
-					offset = offsets[i];
-					offsetArea = area;
+				for (var i = 0; i < offsets.length; i++) {
+					var area = GeometryUtil.polygonArea(offsets[i]);
+					if (offset == null || area < offsetArea) {
+						offset = offsets[i];
+						offsetArea = area;
+					}
+					if (area > 0) {
+						holes.push(offsets[i]);
+					}
 				}
-				if (area > 0) {
-					holes.push(offsets[i]);
+		
+				if (!inside && holes.length > 0) {
+					offset.children = holes;
 				}
-			}
 		
-			if (!inside && holes.length > 0) {
-				offset.children = holes;
+				return offset;
+			} catch (error) {
+				console.error('Error in calculateOffset:', error);
+			} finally {
+				console.timeEnd('calculateOffset');
 			}
-		
-			return offset;
 		}
 		
 		function markExactPoints(simple, polygon) {
-			for (var i = 0; i < simple.length; i++) {
-				var seg = [simple[i], simple[i + 1 == simple.length ? 0 : i + 1]];
-				var index1 = find(seg[0], polygon);
-				var index2 = find(seg[1], polygon);
+			console.time('markExactPoints');
+			try {
+				for (var i = 0; i < simple.length; i++) {
+					var seg = [simple[i], simple[i + 1 == simple.length ? 0 : i + 1]];
+					var index1 = find(seg[0], polygon);
+					var index2 = find(seg[1], polygon);
 		
-				if (index1 + 1 == index2 || index2 + 1 == index1 || (index1 == 0 && index2 == polygon.length - 1) || (index2 == 0 && index1 == polygon.length - 1)) {
-					seg[0].exact = true;
-					seg[1].exact = true;
+					if (index1 + 1 == index2 || index2 + 1 == index1 || (index1 == 0 && index2 == polygon.length - 1) || (index2 == 0 && index1 == polygon.length - 1)) {
+						seg[0].exact = true;
+						seg[1].exact = true;
+					}
 				}
+			} catch (error) {
+				console.error('Error in markExactPoints:', error);
+			} finally {
+				console.timeEnd('markExactPoints');
 			}
 		}
 		
 		function generateShells(simple, tolerance, inside) {
-			var numshells = 4;
-			var shells = [];
+			console.time('generateShells');
+			try {
+				var numshells = 4;
+				var shells = [];
 		
-			for (var j = 1; j < numshells; j++) {
-				var delta = j * (tolerance / numshells);
-				delta = inside ? -delta : delta;
-				var shell = this.polygonOffset(simple, delta);
-				if (shell.length > 0) {
-					shell = shell[0];
+				for (var j = 1; j < numshells; j++) {
+					var delta = j * (tolerance / numshells);
+					delta = inside ? -delta : delta;
+					var shell = this.polygonOffset(simple, delta);
+					if (shell.length > 0) {
+						shell = shell[0];
+					}
+					shells[j] = shell;
 				}
-				shells[j] = shell;
-			}
 		
-			return shells;
+				return shells;
+			} catch (error) {
+				console.error('Error in generateShells:', error);
+			} finally {
+				console.timeEnd('generateShells');
+			}
 		}
 		
 		function selectivelyReverseOffset(offset, simple, polygon, tolerance, inside, shells) {
-			for (var i = 0; i < offset.length; i++) {
-				var o = offset[i];
-				var target = getTarget(o, simple, 2 * tolerance);
+			console.time('selectivelyReverseOffset');
+			try {
+				for (var i = 0; i < offset.length; i++) {
+					var o = offset[i];
+					var target = getTarget(o, simple, 2 * tolerance);
 		
-				var test = clone(offset);
-				test[i] = { x: target.x, y: target.y };
+					var test = clone(offset);
+					test[i] = { x: target.x, y: target.y };
 		
-				if (!exterior(test, polygon, inside)) {
-					o.x = target.x;
-					o.y = target.y;
-				} else {
-					for (var j = 1; j < shells.length; j++) {
-						if (shells[j]) {
-							var shell = shells[j];
-							var delta = j * (tolerance / shells.length);
-							target = getTarget(o, shell, 2 * delta);
-							test = clone(offset);
-							test[i] = { x: target.x, y: target.y };
-							if (!exterior(test, polygon, inside)) {
-								o.x = target.x;
-								o.y = target.y;
-								break;
+					if (!exterior(test, polygon, inside)) {
+						o.x = target.x;
+						o.y = target.y;
+					} else {
+						for (var j = 1; j < shells.length; j++) {
+							if (shells[j]) {
+								var shell = shells[j];
+								var delta = j * (tolerance / shells.length);
+								target = getTarget(o, shell, 2 * delta);
+								test = clone(offset);
+								test[i] = { x: target.x, y: target.y };
+								if (!exterior(test, polygon, inside)) {
+									o.x = target.x;
+									o.y = target.y;
+									break;
+								}
 							}
 						}
 					}
 				}
-			}
 		
-			return offset;
+				return offset;
+			} catch (error) {
+				console.error('Error in selectivelyReverseOffset:', error);
+			} finally {
+				console.timeEnd('selectivelyReverseOffset');
+			}
 		}
 		
 		function straightenLongLines(offset, simple, fixedTolerance, tolerance) {
-			for (var i = 0; i < offset.length; i++) {
-				var p1 = offset[i];
-				var p2 = offset[i + 1 == offset.length ? 0 : i + 1];
-				var sqd = (p2.x - p1.x) * (p2.x - p1.x) + (p2.y - p1.y) * (p2.y - p1.y);
+			console.time('straightenLongLines');
+			try {
+				for (var i = 0; i < offset.length; i++) {
+					var p1 = offset[i];
+					var p2 = offset[i + 1 == offset.length ? 0 : i + 1];
+					var sqd = (p2.x - p1.x) * (p2.x - p1.x) + (p2.y - p1.y) * (p2.y - p1.y);
 		
-				if (sqd < fixedTolerance) continue;
+					if (sqd < fixedTolerance) continue;
 		
-				for (var j = 0; j < simple.length; j++) {
-					var s1 = simple[j];
-					var s2 = simple[j + 1 == simple.length ? 0 : j + 1];
-					var sqds = (p2.x - p1.x) * (p2.x - p1.x) + (p2.y - p1.y) * (p2.y - p1.y);
+					for (var j = 0; j < simple.length; j++) {
+						var s1 = simple[j];
+						var s2 = simple[j + 1 == simple.length ? 0 : j + 1];
+						var sqds = (p2.x - p1.x) * (p2.x - p1.x) + (p2.y - p1.y) * (p2.x - p1.x);
 		
-					if (sqds < fixedTolerance) continue;
+						if (sqds < fixedTolerance) continue;
 		
-					if ((GeometryUtil.almostEqual(s1.x, s2.x) || GeometryUtil.almostEqual(s1.y, s2.y)) &&
-						GeometryUtil.withinDistance(p1, s1, 2 * tolerance) &&
-						GeometryUtil.withinDistance(p2, s2, 2 * tolerance) &&
-						(!GeometryUtil.withinDistance(p1, s1, config.curveTolerance / 1000) ||
-							!GeometryUtil.withinDistance(p2, s2, config.curveTolerance / 1000))) {
-						p1.x = s1.x;
-						p1.y = s1.y;
-						p2.x = s2.x;
-						p2.y = s2.y;
+						if ((GeometryUtil.almostEqual(s1.x, s2.x) || GeometryUtil.almostEqual(s1.y, s2.y)) &&
+							GeometryUtil.withinDistance(p1, s1, 2 * tolerance) &&
+							GeometryUtil.withinDistance(p2, s2, 2 * tolerance) &&
+							(!GeometryUtil.withinDistance(p1, s1, config.curveTolerance / 1000) ||
+								!GeometryUtil.withinDistance(p2, s2, config.curveTolerance / 1000))) {
+							p1.x = s1.x;
+							p1.y = s1.y;
+							p2.x = s2.x;
+							p2.y = s2.y;
+						}
 					}
 				}
-			}
 		
-			return offset;
+				return offset;
+			} catch (error) {
+				console.error('Error in straightenLongLines:', error);
+			} finally {
+				console.timeEnd('straightenLongLines');
+			}
 		}
 		
 		function getTarget(point, simple, tol) {
-			var inrange = [];
-			for (var j = 0; j < simple.length; j++) {
-				var s = simple[j];
-				var d2 = (point.x - s.x) * (point.x - s.x) + (point.y - s.y) * (point.y - s.y);
-				if (d2 < tol * tol) {
-					inrange.push({ point: s, distance: d2 });
-				}
-			}
-		
-			var target;
-			if (inrange.length > 0) {
-				var filtered = inrange.filter(function (p) {
-					return p.point.exact;
-				});
-		
-				inrange = filtered.length > 0 ? filtered : inrange;
-				inrange.sort(function (a, b) {
-					return a.distance - b.distance;
-				});
-		
-				target = inrange[0].point;
-			} else {
-				var mind = null;
+			console.time('getTarget');
+			try {
+				var inrange = [];
 				for (var j = 0; j < simple.length; j++) {
 					var s = simple[j];
 					var d2 = (point.x - s.x) * (point.x - s.x) + (point.y - s.y) * (point.y - s.y);
-					if (mind === null || d2 < mind) {
-						target = s;
-						mind = d2;
+					if (d2 < tol * tol) {
+						inrange.push({ point: s, distance: d2 });
 					}
 				}
-			}
 		
-			return target;
+				var target;
+				if (inrange.length > 0) {
+					var filtered = inrange.filter(function (p) {
+						return p.point.exact;
+					});
+		
+					inrange = filtered.length > 0 ? filtered : inrange;
+					inrange.sort(function (a, b) {
+						return a.distance - b.distance;
+					});
+		
+					target = inrange[0].point;
+				} else {
+					var mind = null;
+					for (var j = 0; j < simple.length; j++) {
+						var s = simple[j];
+						var d2 = (point.x - s.x) * (point.x - s.x) + (point.y - s.y) * (point.y - s.y);
+						if (mind === null || d2 < mind) {
+							target = s;
+							mind = d2;
+						}
+					}
+				}
+		
+				return target;
+			} catch (error) {
+				console.error('Error in getTarget:', error);
+			} finally {
+				console.timeEnd('getTarget');
+			}
 		}
 		
 		function exterior(simple, complex, inside) {
-			for (var i = 0; i < complex.length; i++) {
-				var v = complex[i];
-				if (!inside && !this.pointInPolygon(v, simple) && find(v, simple) === null) {
-					return true;
+			console.time('exterior');
+			try {
+				for (var i = 0; i < complex.length; i++) {
+					var v = complex[i];
+					if (!inside && !this.pointInPolygon(v, simple) && find(v, simple) === null) {
+						return true;
+					}
+					if (inside && this.pointInPolygon(v, simple) && !find(v, simple) === null) {
+						return true;
+					}
 				}
-				if (inside && this.pointInPolygon(v, simple) && !find(v, simple) === null) {
-					return true;
-				}
+				return false;
+			} catch (error) {
+				console.error('Error in exterior:', error);
+			} finally {
+				console.timeEnd('exterior');
 			}
-			return false;
 		}
 		
 		function find(v, p) {
-			for (var i = 0; i < p.length; i++) {
-				if (GeometryUtil.withinDistance(v, p[i], config.curveTolerance / 1000)) {
-					return i;
+			console.time('find');
+			try {
+				for (var i = 0; i < p.length; i++) {
+					if (GeometryUtil.withinDistance(v, p[i], config.curveTolerance / 1000)) {
+						return i;
+					}
 				}
+				return null;
+			} catch (error) {
+				console.error('Error in find:', error);
+			} finally {
+				console.timeEnd('find');
 			}
-			return null;
 		}
 		
 		function clone(p) {
-			var newp = [];
-			for (var i = 0; i < p.length; i++) {
-				newp.push({
-					x: p[i].x,
-					y: p[i].y
-				});
-			}
+			console.time('clone');
+			try {
+				var newp = [];
+				for (var i = 0; i < p.length; i++) {
+					newp.push({
+						x: p[i].x,
+						y: p[i].y
+					});
+				}
 		
-			return newp;
+				return newp;
+			} catch (error) {
+				console.error('Error in clone:', error);
+			} finally {
+				console.timeEnd('clone');
+			}
+		}
+		
+		function logResourceUsage(label) {
+			const memoryUsage = process.memoryUsage();
+			const cpuUsage = process.cpuUsage();
+			console.log(`${label} - Memory Usage:`, memoryUsage);
+			console.log(`${label} - CPU Usage:`, cpuUsage);
 		}
 		
 		this.config = function(c){

@@ -506,7 +506,7 @@ function shiftPolygon(p, shift){
 	
 	return shifted;
 }
-// jsClipper uses X/Y instead of x/y...
+// jsClipper uses X/Y instead of x/y...[husna]assignment 2
 function toClipperCoordinates(polygon){
 	var clone = [];
 	for(var i=0; i<polygon.length; i++){

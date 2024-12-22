@@ -10,7 +10,7 @@ http://www.boost.org/LICENSE_1_0.txt).
 // https://github.com/Jack000/Deepnest/blob/master/minkowski.cc
 // updated for never node version taken from:
 // https://github.com/9swampy/Deepnest/tree/develop
-
+// this comment is to submit assignment 2
 #define BOOST_POLYGON_NO_DEPS
 
 #include <iostream>

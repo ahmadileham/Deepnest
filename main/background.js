@@ -1,5 +1,6 @@
 'use strict';
 
+// 
 function clone(nfp){
 	var newnfp = [];
 
